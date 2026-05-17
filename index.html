@@ -52,7 +52,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .cat-card:hover{border-color:#4a9e6e;box-shadow:0 2px 10px rgba(74,158,110,.12)}
 .cat-card:active{transform:scale(.97)}
 .cat-del{position:absolute;top:7px;right:7px;background:rgba(0,0,0,.07);border:none;border-radius:6px;cursor:pointer;color:#666;font-size:13px;width:22px;height:22px;display:none;align-items:center;justify-content:center}
+.cat-rename{position:absolute;top:7px;right:33px;background:rgba(74,158,110,.12);border:none;border-radius:6px;cursor:pointer;color:#4a9e6e;font-size:13px;width:22px;height:22px;display:none;align-items:center;justify-content:center}
 .cat-card:hover .cat-del{display:flex}
+.cat-card:hover .cat-rename{display:flex}
 .cat-icon{font-size:26px;margin-bottom:7px}
 .cat-name{font-size:13px;font-weight:600;margin-bottom:2px}
 .cat-count{font-size:12px;color:#aaa}
@@ -409,6 +411,11 @@ textarea{resize:vertical;line-height:1.6}
       <div class="toolbar">
         <input type="text" class="search-box" id="search-box" placeholder="🔍 搜索题目..." oninput="renderQs()">
         <select class="sel" id="filter-cat" onchange="renderQs()"><option value="">全部分类</option></select>
+        <select class="sel" id="filter-type" onchange="renderQs()" title="按题型筛选">
+          <option value="">全部题型</option>
+          <option value="mc">选择题</option>
+          <option value="fill">填空题</option>
+        </select>
         <div class="ml-auto">
           <button class="btn-ghost" onclick="openAddQ('mc')">＋ 选择题</button>
           <button class="btn-ghost" onclick="openAddQ('fill')">＋ 填空题</button>
@@ -476,8 +483,8 @@ function buildRTE(id,placeholder,initialHtml,rows){
       +'<button class="rte-btn" onmousedown="rteSub(event,\''+id+'\')" title="下标">X₂</button>'
       +'<button class="rte-btn" onmousedown="rteSup(event,\''+id+'\')" title="上标">X²</button>'
       +'<button class="rte-btn" onmousedown="rteCode(event,\''+id+'\')" title="行内代码">{ }</button>'
-      +'<button class="rte-btn" onmousedown="rteColor(event,\''+id+'\')" title="文字颜色">A🎨</button>'
-      +'<input type="color" class="color-inp" id="rte-color-'+id+'" value="#e74c3c" onchange="rteApplyColor(\''+id+'\')">'
+      +'<button class="rte-btn" onmousedown="rteColor(event,\''+id+'\')" title="文字颜色">🎨</button>'
+      +'<input type="color" class="color-inp" id="rte-color-'+id+'" value="#e74c3c" oninput="rteApplyColor(\''+id+'\')" onchange="rteApplyColor(\''+id+'\')">'
     +'</div>'
     +'<div class="rte-editor" id="rte-'+id+'" contenteditable="true" data-placeholder="'+placeholder+'" style="min-height:'+minH+'px" oninput="rteSync(\''+id+'\')" onpaste="rtePaste(event,\''+id+'\')">'
       +(initialHtml||'')
@@ -527,13 +534,22 @@ function rteCode(e,id){
   try{r.surroundContents(code);}catch(ex){code.textContent=r.toString();r.deleteContents();r.insertNode(code);}
   rteSync(id);
 }
+var _savedRange=null;
 function rteColor(e,id){
   e.preventDefault();
+  // save current selection so it survives the color picker focus shift
+  var sel=window.getSelection();
+  if(sel&&sel.rangeCount){_savedRange=sel.getRangeAt(0).cloneRange();}else{_savedRange=null;}
   document.getElementById('rte-color-'+id).click();
 }
 function rteApplyColor(id){
   var color=document.getElementById('rte-color-'+id).value;
-  var el=document.getElementById('rte-'+id);el.focus();
+  var el=document.getElementById('rte-'+id);
+  el.focus();
+  // restore saved selection if any
+  if(_savedRange){
+    var sel=window.getSelection();sel.removeAllRanges();sel.addRange(_savedRange);
+  }
   document.execCommand('foreColor',false,color);
   rteSync(id);
 }
@@ -839,6 +855,7 @@ function renderCats(){
     var cnt=_questions.filter(function(q){return q.cat===c.name;}).length;
     return '<div class="cat-card" onclick="catCardClick(\''+esc(c.name)+'\')">'
       +'<button class="cat-del" onclick="event.stopPropagation();delCat(\''+esc(c.name)+'\')">×</button>'
+      +'<button class="cat-rename" onclick="event.stopPropagation();openRenameCat(\''+esc(c.name)+'\')" title="重命名">✎</button>'
       +'<div class="cat-icon">'+c.icon+'</div>'
       +'<div class="cat-name">'+esc(c.name)+'</div>'
       +'<div class="cat-count">'+cnt+' 题</div></div>';
@@ -846,9 +863,14 @@ function renderCats(){
 }
 function catCardClick(name){hubCat=name;switchTab('quiz');}
 function delCat(name){
-  if(!confirm('删除分类「'+name+'」？\n分类内题目不会被删除。'))return;
-  IDB.deleteCat(name).then(function(){
-    reloadCats(function(){renderCats();});
+  if(!confirm('删除分类「'+name+'」？\n该分类下的所有题目也会一并删除，此操作不可撤销。'))return;
+  IDB.getAllQuestions().then(function(qs){
+    var toDelete=qs.filter(function(q){return q.cat===name;});
+    return Promise.all(toDelete.map(function(q){return IDB.deleteQuestion(q.id);}));
+  }).then(function(){
+    return IDB.deleteCat(name);
+  }).then(function(){
+    loadAll(function(){renderCats();});
   });
 }
 function openAddCat(){
@@ -872,17 +894,48 @@ function addCat(){
   });
 }
 
+function openRenameCat(oldName){
+  var cat=_cats.find(function(c){return c.name===oldName;});if(!cat)return;
+  var ibts=ICONS.map(function(ic){return '<button class="icon-btn'+(ic===cat.icon?' sel':'')+'" data-ic="'+ic+'" onclick="pickReIcon(\''+ic+'\')">'+ic+'</button>';}).join('');
+  showModal('<h2>编辑分类</h2>'
+    +'<div class="fr"><label>分类名称</label><input type="text" id="rn-name" value="'+esc(oldName)+'"></div>'
+    +'<div class="fr"><label>图标</label><div class="icon-grid">'+ibts+'</div><input type="text" id="rn-icon" value="'+esc(cat.icon)+'" style="display:none"></div>'
+    +'<div class="modal-actions"><button class="btn-o" onclick="closeModal()">取消</button><button class="btn-p" onclick="renameCat(\''+esc(oldName)+'\')">保存</button></div>');
+}
+function pickReIcon(ic){
+  document.getElementById('rn-icon').value=ic;
+  document.querySelectorAll('.icon-btn').forEach(function(b){b.classList.toggle('sel',b.dataset.ic===ic);});
+}
+function renameCat(oldName){
+  var newName=document.getElementById('rn-name').value.trim();
+  var newIcon=document.getElementById('rn-icon').value||'📘';
+  if(!newName){alert('名称不能为空');return;}
+  if(newName!==oldName&&_cats.find(function(c){return c.name===newName;})){alert('分类名称已存在');return;}
+  // update cat record
+  IDB.deleteCat(oldName).then(function(){
+    return IDB.addCat({name:newName,icon:newIcon});
+  }).then(function(){
+    // update all questions in this category
+    var toUpdate=_questions.filter(function(q){return q.cat===oldName;});
+    return Promise.all(toUpdate.map(function(q){return IDB.updateQuestion(q.id,{cat:newName});}));
+  }).then(function(){
+    loadAll(function(){closeModal();renderCats();});
+  });
+}
+
 // ═══════════════════════════════════════════════
 //  QUESTION LIST
 // ═══════════════════════════════════════════════
 function renderQs(){
   var cat=document.getElementById('filter-cat').value;
+  var typeFilter=(document.getElementById('filter-type')||{}).value||'';
   var keyword=(document.getElementById('search-box').value||'').trim().toLowerCase();
   var sel=document.getElementById('filter-cat');var prev=cat;
   sel.innerHTML='<option value="">全部分类</option>'+_cats.map(function(c){return '<option value="'+esc(c.name)+'">'+c.icon+' '+esc(c.name)+'</option>';}).join('');
   sel.value=prev;
   var qs=_questions.slice();
   if(cat)qs=qs.filter(function(q){return q.cat===cat;});
+  if(typeFilter)qs=qs.filter(function(q){return q.type===typeFilter;});
   if(keyword)qs=qs.filter(function(q){
     return (q.q||'').toLowerCase().indexOf(keyword)>=0
       ||(q.opts&&q.opts.join(' ').toLowerCase().indexOf(keyword)>=0)
@@ -905,7 +958,7 @@ function renderQs(){
         +'<div style="display:flex;align-items:center;gap:5px;margin-bottom:4px;flex-wrap:wrap">'
           +'<span class="q-id">'+q.id+'</span>'
           +'<span class="q-cat-label">'+esc(q.cat)+'</span>'
-          +wrongBadge+masteredBadge
+          +masteredBadge
         +'</div>'
         +'<div class="q-text">'+renderMd(q.q)+'</div>'
         +optsPreview+expPreview+editHtml
@@ -1060,7 +1113,8 @@ function renderAddPage(){
         +'<button class="add-add-opt-btn" onclick="addAddOpt()">＋ 添加选项</button>'
       +'</div>'
       +'<div class="fr" style="margin-bottom:0"><label>解析 <span style="color:#bbb;font-weight:400">(选填)</span></label>'
-        +'<textarea id="add-exp" placeholder="请输入解析..." rows="2"></textarea></div>'
+        +buildRTE('add-exp','请输入解析...','')+' '
+      +'</div>'
     +'</div>'
     +'<div class="add-actions">'
       +'<button class="add-save-next-btn" onclick="saveAndContinue()">保存并继续录题</button>'
@@ -1079,7 +1133,7 @@ function collectAddForm(){
   var cor=parseInt(document.querySelector('input[name=add-cor]:checked').value);
   if(!opts[cor]){alert('正确答案对应的选项为空');return null;}
   var corText=opts[cor];var finalOpts=opts.filter(Boolean);var finalCor=finalOpts.indexOf(corText);
-  var exp=(document.getElementById('add-exp')||{}).value||'';
+  var exp=rteGet('add-exp')||'';
   return{type:'mc',cat:cat,q:qHtml,opts:finalOpts,correct:finalCor,exp:exp.trim()};
 }
 function saveAndContinue(){
@@ -1119,7 +1173,7 @@ function renderQuizHub(){
   hub.innerHTML=
     '<div class="hub-cat-header"><div class="hub-cat-icon">'+catIcon+'</div>'
       +'<div class="hub-cat-info"><div class="hub-cat-name">'+esc(catName)+'</div>'
-        +'<div class="hub-cat-meta">可练题 '+pool.length+' 道（已掌握不计入）</div></div>'
+        +'<div class="hub-cat-meta">可练习 '+pool.length+' 道</div></div>'
       +'<select class="hub-cat-sel" onchange="hubSetCat(this.value)">'+catOpts+'</select></div>'
     +'<div class="hub-section"><div class="hub-section-title">我的练习</div><div class="hub-grid">'
       +hitem('hi-red','❌','我的错题',wrongCnt+' 道',"launchSpecial('wrong')")
@@ -1150,7 +1204,7 @@ function openSetup(mode){
   var shRow=mode!=='ordered'?'<div class="ck-row"><input type="checkbox" id="sh-q" checked><label for="sh-q">打乱题目顺序</label></div>':'';
   document.getElementById('quiz-setup').innerHTML=
     '<div class="setup-overlay" onclick="if(event.target===this)closeSetup()"><div class="setup-box"><h2>'+label+'</h2>'
-      +'<div class="setup-sub">'+(hubCat||'全部题库')+' · 可练 '+pool.length+' 题</div>'
+      +'<div class="setup-sub">'+(hubCat||'全部题库')+' · 可练 '+pool.length+' 道</div>'
       +typeRow
       +'<div class="fr"><label>题目数量</label><select id="qz-cnt" style="width:100%"><option value="5">5 题</option><option value="10" selected>10 题</option><option value="20">20 题</option><option value="0">全部（'+pool.length+' 题）</option></select></div>'
       +shRow
@@ -1212,7 +1266,7 @@ function renderSession(){
   }else{
     var fv=done&&qz.ans[qz.cur]!=='__empty__'?esc(qz.ans[qz.cur]):'';
     var fc=done?(qz.ans[qz.cur]&&qz.ans[qz.cur].trim().toLowerCase()===q.ans.trim().toLowerCase()?' fc':' fw'):'';
-    qbody='<div class="fill-wrap"><input class="fill-inp'+fc+'" id="fi" value="'+fv+'"'+(done?' disabled':'')+' placeholder="输入答案，回车确认，空白直接回车跳过">'
+    qbody='<div class="fill-wrap"><input class="fill-inp'+fc+'" id="fi" value="'+fv+'"'+(done?' disabled':'')+' placeholder="输入答案，回车确认">'
       +(done?'':'<button class="confirm-btn" onclick="ansFill()">确认</button>')+'</div>';
   }
 
@@ -1266,7 +1320,7 @@ function renderSession(){
           +'<span class="q-num">'+(qz.cur+1)+'/'+qz.qs.length+'</span>'
           +'<div class="q-header-actions">'
             +'<button class="q-star-btn" onclick="inSessionStar()" title="收藏">'+(q.starred?'⭐':'☆')+'</button>'
-            +'<button class="q-mastered-btn'+(q.mastered?' on':'')+'" onclick="inSessionMastered()" title="标记已掌握">✅</button>'
+            +'<button class="q-mastered-btn'+(q.mastered?' on':'')+'" onclick="inSessionMastered()" title="'+(q.mastered?'取消已掌握':'标记为已掌握')+'">'+(q.mastered?'✅ 已掌握':'☐ 未掌握')+'</button>'
             +'<button class="q-edit-btn" onclick="toggleQuizEdit()">'+(qz.inlineEdit?'取消':'编辑')+'</button>'
           +'</div></div>'
         +'<div class="q-body-text">'+renderMd(q.q)+'</div>'
@@ -1347,11 +1401,21 @@ function ansMC(i){
   if(i===q.correct){
     qz.score++;q.totalAnswered=newTotal;
     qz.correctList.push(qz.cur);
-    IDB.updateQuestion(q.id,{correctStreak:(q.correctStreak||0)+1,totalAnswered:newTotal});
+    var newStreak=(q.correctStreak||0)+1;
+    IDB.updateQuestion(q.id,{correctStreak:newStreak,totalAnswered:newTotal}).then(function(updated){
+      if(updated){
+        var thresh=CFG.get('wrongThreshold')||2;
+        var neverRemove=CFG.get('wrongNeverRemove');
+        if(!neverRemove&&thresh>0&&newStreak>=thresh&&(updated.wrongCount||0)>0){
+          IDB.updateQuestion(q.id,{wrongCount:0,correctStreak:0});
+          reloadQ(function(){});
+        }
+      }
+    });
     if(CFG.get('autoNext')&&qz.cur+1<qz.qs.length){renderSession();setTimeout(function(){nextQ();},650);return;}
   }else{
     qz.wrongList.push(qz.cur);
-    q.wrongCount=(q.wrongCount||0)+1;q.totalAnswered=newTotal;
+    q.wrongCount=(q.wrongCount||0)+1;q.totalAnswered=newTotal;q.correctStreak=0;
     IDB.updateQuestion(q.id,{wrongCount:q.wrongCount,correctStreak:0,totalAnswered:newTotal});
   }
   renderSession();
@@ -1365,11 +1429,21 @@ function ansFill(){
   if(ok){
     qz.score++;q.totalAnswered=newTotal;
     qz.correctList.push(qz.cur);
-    IDB.updateQuestion(q.id,{correctStreak:(q.correctStreak||0)+1,totalAnswered:newTotal});
+    var newStreak=(q.correctStreak||0)+1;
+    IDB.updateQuestion(q.id,{correctStreak:newStreak,totalAnswered:newTotal}).then(function(updated){
+      if(updated){
+        var thresh=CFG.get('wrongThreshold')||2;
+        var neverRemove=CFG.get('wrongNeverRemove');
+        if(!neverRemove&&thresh>0&&newStreak>=thresh&&(updated.wrongCount||0)>0){
+          IDB.updateQuestion(q.id,{wrongCount:0,correctStreak:0});
+          reloadQ(function(){});
+        }
+      }
+    });
     if(CFG.get('autoNext')&&qz.cur+1<qz.qs.length){renderSession();setTimeout(function(){nextQ();},650);return;}
   }else{
     qz.wrongList.push(qz.cur);
-    q.wrongCount=(q.wrongCount||0)+1;q.totalAnswered=newTotal;
+    q.wrongCount=(q.wrongCount||0)+1;q.totalAnswered=newTotal;q.correctStreak=0;
     IDB.updateQuestion(q.id,{wrongCount:q.wrongCount,correctStreak:0,totalAnswered:newTotal});
   }
   renderSession();
@@ -1380,6 +1454,7 @@ function prevQ(){if(qz.cur>0){qz.cur--;qz.inlineEdit=false;renderSession();}}
 function nextQ(){qz.inlineEdit=false;if(qz.cur+1<qz.qs.length){qz.cur++;renderSession();}else showResult();}
 
 function showResult(){
+  _reviewOpen=null;
   document.getElementById('quiz-session').classList.add('hidden');
   var pct=Math.round(qz.score/qz.qs.length*100);
   var emoji=pct>=90?'🎉':pct>=70?'👍':pct>=50?'💪':'📖';
@@ -1398,9 +1473,27 @@ function showResult(){
   document.getElementById('quiz-hub').classList.add('hidden');
 }
 
+var _reviewOpen=null; // 'ok' | 'fail' | null
 function showReview(type){
-  var indices=type==='ok'?qz.correctList:qz.wrongList;
   var panel=document.getElementById('review-panel');if(!panel)return;
+  // toggle: clicking same type again collapses
+  if(_reviewOpen===type){
+    _reviewOpen=null;panel.innerHTML='';
+    // reset arrow indicators
+    document.querySelectorAll('.stat-c.clickable .stat-l').forEach(function(el){
+      el.textContent=el.textContent.replace(' ▴',' ▾');
+    });
+    return;
+  }
+  _reviewOpen=type;
+  // update arrow on clicked card
+  document.querySelectorAll('.stat-c.clickable').forEach(function(el){
+    var lbl=el.querySelector('.stat-l');if(!lbl)return;
+    var isThis=(type==='ok'&&lbl.textContent.indexOf('答对')>=0)||(type==='fail'&&lbl.textContent.indexOf('答错')>=0);
+    lbl.textContent=lbl.textContent.replace(' ▾',' ▴').replace(' ▴','').replace(/ ▾/,'');
+    lbl.textContent+=(isThis?' ▴':' ▾');
+  });
+  var indices=type==='ok'?qz.correctList:qz.wrongList;
   if(!indices.length){panel.innerHTML='<div style="text-align:center;padding:16px;color:#aaa;font-size:13px">'+(type==='ok'?'本次无答对':'本次无答错')+'</div>';return;}
   var items=indices.map(function(i){
     var q=qz.qs[i];
@@ -1438,6 +1531,11 @@ function renderSettingsPage(){
         +'<label class="toggle"><input type="checkbox" id="gs-autonext"'+(cfg.autoNext?' checked':'')+' onchange="CFG.set(\'autoNext\',this.checked)"><span class="toggle-slider"></span></label>'
       +'</div>'
     +'</div>'
+    +'<div class="settings-card"><h3>❌ 错题设置</h3>'
+      +'<div class="s-item"><div class="s-item-left"><div class="s-item-label">连续答对几次移出错题</div><div class="s-item-sub">0 = 永不自动移出</div></div>'
+        +'<input type="number" class="num-input" id="gs-thresh" min="0" max="20" value="'+(cfg.wrongNeverRemove?0:(cfg.wrongThreshold||2))+'" onchange="onGlobalThreshChange(this.value)">'
+      +'</div>'
+    +'</div>'
     +'<div class="settings-card"><h3>📦 数据管理</h3>'
       +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
         +'<button class="btn-ghost" onclick="exportData()" style="flex:1;text-align:center">⬇ 导出 JSON</button>'
@@ -1447,7 +1545,12 @@ function renderSettingsPage(){
         +'换设备或浏览器前请先导出 JSON 备份。导入时按题目 ID 合并，不重复。'
       +'</div>'
       +'<button class="btn-danger" onclick="clearAllData()">⚠ 清空全部数据</button>'
-    +'</div>';
+    +'</div>'
+    +'<div style="text-align:center;padding:14px 0;font-size:12px;color:#ccc">版本 0.0.7</div>';
+}
+function onGlobalThreshChange(val){
+  val=parseInt(val)||0;
+  if(val===0){CFG.set('wrongNeverRemove',true);}else{CFG.set('wrongNeverRemove',false);CFG.set('wrongThreshold',val);}
 }
 
 function clearAllData(){
@@ -1502,26 +1605,24 @@ function initSample(cb){
     var sampleCats=[
       {name:'Python 基础',icon:'🐍'},
       {name:'Git 学习',icon:'🌿'},
-      {name:'CCIE 路由交换',icon:'🌐'},
-      {name:'CAR 工作',icon:'🚗'}
+      {name:'CCIE 路由交换',icon:'🌐'}
     ];
     var sampleQs=[
-      {type:'mc',cat:'Python 基础',q:'下面哪个是 Python 的<strong>列表（List）</strong>？',opts:['(1,2,3)','[1,2,3]','{1,2,3}','<1,2,3>'],correct:1,exp:'方括号 <code>[]</code> 是 Python 列表的语法'},
+      {type:'mc',cat:'Python 基础',q:'下面哪个是 Python 的<strong>列表（List）</strong>？',opts:['(1,2,3)','[1,2,3]','{1,2,3}','<1,2,3>'],correct:1,exp:'方括号 <code>[]</code> 是 Python 列表语法'},
       {type:'mc',cat:'Python 基础',q:'Python 中定义函数使用哪个关键字？',opts:['def','func','function','define'],correct:0,exp:''},
-      {type:'fill',cat:'Python 基础',q:'获取列表长度的内置函数是？',ans:'len',exp:''},
+      {type:'mc',cat:'Python 基础',q:'以下哪种数据类型是不可变的？',opts:['list','dict','tuple','set'],correct:2,exp:'tuple 是不可变序列'},
+      {type:'fill',cat:'Python 基础',q:'获取列表长度的内置函数是？',ans:'len',exp:'len([1,2,3]) 返回 3'},
+      {type:'mc',cat:'Python 基础',q:'Python 中用于捕获异常的关键字是？',opts:['catch','except','handle','error'],correct:1,exp:'Python 使用 try / except 语法'},
       {type:'mc',cat:'Git 学习',q:'哪个命令将修改<strong>提交</strong>到本地仓库？',opts:['git push','git commit','git add','git merge'],correct:1,exp:''},
       {type:'fill',cat:'Git 学习',q:'查看当前仓库状态的命令是？',ans:'git status',exp:''},
-      // CCIE
-      {type:'mc',cat:'CCIE 路由交换',q:'OSI 模型中，负责端到端传输的层是哪一层？',opts:['网络层（Layer 3）','传输层（Layer 4）','会话层（Layer 5）','数据链路层（Layer 2）'],correct:1,exp:'传输层（Transport Layer）提供端到端的可靠传输，TCP/UDP 工作在此层'},
-      {type:'mc',cat:'CCIE 路由交换',q:'OSPF 协议使用哪种算法计算最短路径？',opts:['Bellman-Ford','Dijkstra（SPF）','RIP 跳数','EIGRP DUAL'],correct:1,exp:'OSPF 使用 Dijkstra 的 SPF（Shortest Path First）算法'},
-      {type:'mc',cat:'CCIE 路由交换',q:'STP（802.1D）中，Root Bridge 的选举依据是什么？',opts:['最高 MAC 地址','最低 Bridge Priority + MAC','最多端口数','最高带宽'],correct:1,exp:'Bridge ID = Priority（默认32768）+ MAC，选最低 Bridge ID 的交换机为 Root Bridge'},
-      {type:'mc',cat:'CCIE 路由交换',q:'BGP 使用哪个传输层协议和端口？',opts:['UDP 179','TCP 179','TCP 80','UDP 520'],correct:1,exp:'BGP 使用 TCP 179 端口建立邻居关系，保证可靠传输'},
-      {type:'fill',cat:'CCIE 路由交换',q:'VLAN 间路由的两种主流方式是单臂路由和 ___？',ans:'三层交换机',exp:'三层交换机通过 SVI（Switched Virtual Interface）实现 VLAN 间路由，性能更高'},
-      // CAR
-      {type:'mc',cat:'CAR 工作',q:'LSB（Least Significant Bit）在数据传输中通常是第几位先发送？',opts:['最高位（MSB first）','最低位（LSB first）','中间位','随机顺序'],correct:1,exp:'LSB first 表示最低有效位优先传输，常见于 SPI、CAN 等协议配置'},
-      {type:'mc',cat:'CAR 工作',q:'ECU（Electronic Control Unit）与传感器通信最常用的总线协议是？',opts:['UART','USB','CAN Bus','HDMI'],correct:2,exp:'CAN Bus（Controller Area Network）是汽车电子中最主流的 ECU 通信协议，具有高可靠性和实时性'},
-      {type:'mc',cat:'CAR 工作',q:'CAN 总线的最大通信速率（高速 CAN）是？',opts:['125 kbps','250 kbps','500 kbps','1 Mbps'],correct:3,exp:'高速 CAN（ISO 11898-2）标准最高支持 1 Mbps，实际汽车应用通常使用 500 kbps'},
-      {type:'fill',cat:'CAR 工作',q:'ECU 刷写（Programming）时，常用的标准诊断协议是 UDS，其 ISO 编号是？',ans:'ISO 14229',exp:'UDS（Unified Diagnostic Services）基于 ISO 14229 标准，广泛用于汽车 ECU 编程和诊断'},
+      {type:'mc',cat:'Git 学习',q:'将远程仓库内容拉取并合并到本地的命令是？',opts:['git fetch','git clone','git pull','git sync'],correct:2,exp:'git pull = git fetch + git merge'},
+      {type:'mc',cat:'Git 学习',q:'创建并切换到新分支的命令是？',opts:['git branch new','git checkout -b new','git switch new','git create new'],correct:1,exp:'git checkout -b <branch> 是经典写法，git switch -c 是新写法'},
+      {type:'fill',cat:'Git 学习',q:'撤销最近一次提交（保留修改）的命令是？',ans:'git reset HEAD~1',exp:'--soft 保留暂存区，--mixed（默认）退回工作区'},
+      {type:'mc',cat:'CCIE 路由交换',q:'OSI 模型中，负责端到端传输的是第几层？',opts:['网络层 Layer 3','传输层 Layer 4','会话层 Layer 5','数据链路层 Layer 2'],correct:1,exp:'传输层（Transport Layer）提供端到端可靠传输，TCP/UDP 在此层'},
+      {type:'mc',cat:'CCIE 路由交换',q:'OSPF 协议使用哪种算法计算最短路径？',opts:['Bellman-Ford','Dijkstra（SPF）','RIP 跳数','EIGRP DUAL'],correct:1,exp:'OSPF 使用 Dijkstra SPF 算法'},
+      {type:'mc',cat:'CCIE 路由交换',q:'STP（802.1D）Root Bridge 选举依据是？',opts:['最高 MAC 地址','最低 Bridge ID（Priority+MAC）','最多端口','最高带宽'],correct:1,exp:'Bridge ID 最小的交换机成为 Root Bridge，Priority 默认 32768'},
+      {type:'mc',cat:'CCIE 路由交换',q:'BGP 使用哪个协议和端口建立邻居？',opts:['UDP 179','TCP 179','TCP 80','UDP 520'],correct:1,exp:'BGP 基于 TCP 179，确保可靠传输'},
+      {type:'fill',cat:'CCIE 路由交换',q:'VLAN 间路由除单臂路由外，另一种主流方式是？',ans:'三层交换机',exp:'三层交换机通过 SVI 接口实现 VLAN 间路由，性能优于单臂路由'},
     ];
     Promise.all(sampleCats.map(function(c){return IDB.addCat(c);})).then(function(){
       return sampleQs.reduce(function(p,q){return p.then(function(){return IDB.addQuestion(q);});},Promise.resolve());
