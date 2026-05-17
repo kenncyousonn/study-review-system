@@ -1500,10 +1500,10 @@ function initSample(cb){
   IDB.getAllCats().then(function(cats){
     if(cats.length){if(cb)cb();return;}
     var sampleCats=[
-      {name:'Python',icon:'🐍'},
-      {name:'Git',icon:'🌿'},
-      {name:'CCIE',icon:'🌐'},
-      {name:'CAR',icon:'🚗'}
+      {name:'Python 基础',icon:'🐍'},
+      {name:'Git 学习',icon:'🌿'},
+      {name:'CCIE 路由交换',icon:'🌐'},
+      {name:'CAR 工作',icon:'🚗'}
     ];
     var sampleQs=[
       {type:'mc',cat:'Python 基础',q:'下面哪个是 Python 的<strong>列表（List）</strong>？',opts:['(1,2,3)','[1,2,3]','{1,2,3}','<1,2,3>'],correct:1,exp:'方括号 <code>[]</code> 是 Python 列表的语法'},
