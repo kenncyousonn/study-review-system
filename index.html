@@ -1248,12 +1248,25 @@ function renderQuizHub(){
 function hitem(cls,icon,name,sub,onclick){return '<div class="hub-item" onclick="'+onclick+'"><div class="hub-item-icon '+cls+'">'+icon+'</div><div class="hub-item-body"><div class="hub-item-name">'+name+'</div><div class="hub-item-sub">'+sub+'</div></div><span class="hub-arr">›</span></div>';}
 function hubSetCat(val){hubCat=val;renderQuizHub();}
 
+// 按题型分组：选择题全部在前，填空题全部在后
+// 各组内部保持原有顺序（随机/顺序由外层决定）
+// 「题型练习」模式选了单一类型时不需要分组，直接跳过
+function groupByType(pool, mode){
+  // 题型练习已经是单一类型，不分组
+  if(mode==='type') return pool;
+  var mc=pool.filter(function(q){return q.type==='mc';});
+  var fill=pool.filter(function(q){return q.type!=='mc';});
+  return mc.concat(fill);
+}
+
 function launchSpecial(mode){
   var pool=hubCat?_questions.filter(function(q){return q.cat===hubCat;}):_questions.slice();
   if(mode==='wrong')pool=pool.filter(function(q){return q.wrongCount&&q.wrongCount>0;});
   if(mode==='star')pool=pool.filter(function(q){return q.starred;});
   if(!pool.length){alert(mode==='wrong'?'暂无错题，继续加油！':'暂无收藏，去收藏几题吧～');return;}
+  // 每种类型内部随机打乱，再分组
   pool=pool.slice().sort(function(){return Math.random()-.5;});
+  pool=groupByType(pool, mode);
   beginSession(pool,mode);
 }
 
@@ -1292,7 +1305,9 @@ function startFromSetup(mode){
       return Object.assign({},q,{opts:idx.map(function(i){return q.opts[i];}),correct:idx.indexOf(q.correct)});
     });
   }
-  closeSetup();beginSession(pool,mode);
+  closeSetup();
+  pool=groupByType(pool, mode);
+  beginSession(pool,mode);
 }
 
 function beginSession(pool,mode){
@@ -1343,7 +1358,7 @@ function renderSession(){
   var statsHtml='<div class="q-stats-row"><span class="stat-chip">回答 '+ta+' 次</span><span class="stat-chip sc-err">错误 '+wc+' 次</span><span class="stat-chip sc-ok">正确率 '+(rate!==null?rate+'%':'—')+'</span></div>';
 
   // answer card
-  var mcDots='',fillDots='';
+  var mcDots='',fillDots='',mcIdx=0,fillIdx=0;
   qz.qs.forEach(function(qq,i){
     var cls='ans-dot';
     if(i===qz.cur)cls+=' cur';
@@ -1352,9 +1367,23 @@ function renderSession(){
       var ok2=q2.type==='mc'?qz.ans[i]===q2.correct:(qz.ans[i]!=='__empty__'&&qz.ans[i].trim().toLowerCase()===q2.ans.trim().toLowerCase());
       cls+=ok2?' dok':' dfail';
     }
-    var dot='<button class="'+cls+'" onclick="jumpTo('+i+')">'+(i+1)+'</button>';
-    if(qq.type==='mc')mcDots+=dot;else fillDots+=dot;
+    if(qq.type==='mc'){
+      mcIdx++;
+      mcDots+='<button class="'+cls+'" onclick="jumpTo('+i+')" title="选择题第'+mcIdx+'题">'+mcIdx+'</button>';
+    }else{
+      fillIdx++;
+      fillDots+='<button class="'+cls+'" onclick="jumpTo('+i+')" title="填空题第'+fillIdx+'题">'+fillIdx+'</button>';
+    }
   });
+
+  // 计算当前题在组内的位置
+  var mcTotal=qz.qs.filter(function(x){return x.type==='mc';}).length;
+  var fillTotal=qz.qs.filter(function(x){return x.type!=='mc';}).length;
+  var groupPos=q.type==='mc'
+    ? qz.qs.slice(0,qz.cur+1).filter(function(x){return x.type==='mc';}).length
+    : qz.qs.slice(0,qz.cur+1).filter(function(x){return x.type!=='mc';}).length;
+  var groupTotal=q.type==='mc'?mcTotal:fillTotal;
+  var qNumText=groupPos+'/'+groupTotal+(groupTotal<qz.qs.length?'（'+(q.type==='mc'?'选':'填')+'）':'');
 
   var cfg=CFG.all();
   var sidebarHtml=
@@ -1372,12 +1401,12 @@ function renderSession(){
 
   document.getElementById('quiz-session').innerHTML=
     '<div class="quiz-bc"><a onclick="renderQuizHub()">练习</a> › '+(hubCat||'全部')+'</div>'
-    +'<div class="prog-row"><span>进度</span><strong>'+answN+' / '+qz.qs.length+'</strong></div>'
+    +'<div class="prog-row"><span>总进度</span><strong>'+answN+' / '+qz.qs.length+(mcTotal>0&&fillTotal>0?' （选 '+mcTotal+' · 填 '+fillTotal+'）':'')+'</strong></div>'
     +'<div class="pbar"><div class="pfill" style="width:'+pct+'%"></div></div>'
     +'<div class="quiz-layout"><div class="quiz-main">'
       +'<div class="quiz-card">'
         +'<div class="q-header"><span class="q-type-tag">'+(q.type==='mc'?'单选题':'填空题')+'</span>'
-          +'<span class="q-num">'+(qz.cur+1)+'/'+qz.qs.length+'</span>'
+          +'<span class="q-num">'+qNumText+'</span>'
           +'<div class="q-header-actions">'
             +'<button class="q-star-btn" onclick="inSessionStar()" title="收藏">'+(q.starred?'⭐':'☆')+'</button>'
             +'<button class="q-mastered-btn'+(q.mastered?' on':'')+'" onclick="inSessionMastered()" title="'+(q.mastered?'取消已掌握':'标记为已掌握')+'">'+(q.mastered?'✅ 已掌握':'☐ 未掌握')+'</button>'
