@@ -188,8 +188,16 @@ textarea{resize:vertical;line-height:1.6}
 .add-opt-inp{flex:1;border:none;background:transparent;font-size:14px;color:#1a1a1a;font-family:inherit;outline:none;min-width:0}
 .add-opt-del{background:none;border:none;cursor:pointer;font-size:16px;opacity:.35;flex-shrink:0;padding:0 3px;line-height:1}
 .add-opt-del:hover{opacity:.9;color:#e74c3c}
-.add-add-opt-btn{font-size:13px;color:#4a9e6e;background:none;border:1px dashed #b8dcc8;border-radius:8px;padding:8px;cursor:pointer;width:100%;margin-top:2px}
-.add-add-opt-btn:hover{background:#eaf5f0}
+/* ── ADD PAGE TYPE TABS ── */
+.add-type-tabs{display:flex;gap:0;margin-bottom:14px;border:1.5px solid #d0e8d8;border-radius:10px;overflow:hidden}
+.add-type-tab{flex:1;padding:9px 0;text-align:center;font-size:14px;font-weight:500;cursor:pointer;background:#fff;color:#888;border:none;transition:all .15s}
+.add-type-tab.active{background:#4a9e6e;color:#fff;font-weight:600}
+.add-type-tab:first-child{border-right:1.5px solid #d0e8d8}
+.add-type-tab.active+.add-type-tab,.add-type-tab:first-child.active{border-color:transparent}
+/* fill answer box in add page */
+.add-ans-box{padding:11px 14px;border:1.5px solid #d0e8d8;border-radius:10px;background:#fafcfa;font-size:14px;min-height:48px}
+.add-ans-box:focus-within{border-color:#4a9e6e;background:#f5fbf7}
+
 .add-actions{display:flex;gap:9px}
 .add-save-next-btn{flex:2;padding:12px;background:#4a9e6e;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;transition:background .2s}
 .add-save-next-btn:hover{background:#3a8a5e}
@@ -1146,21 +1154,15 @@ function saveMQ(type){
 // ═══════════════════════════════════════════════
 //  ADD PAGE
 // ═══════════════════════════════════════════════
+var _addType='mc'; // 'mc' | 'fill'  — persists between saves
+
 function renderAddPage(){
   if(!_cats.length){document.getElementById('add-page-inner').innerHTML='<div class="empty"><div class="empty-icon">📂</div>请先新建分类<br><br><button class="btn-p" onclick="switchTab(\'cats\')">去新建分类</button></div>';return;}
   var catOpts=_cats.map(function(c){return '<option value="'+esc(c.name)+'">'+c.icon+' '+esc(c.name)+'</option>';}).join('');
-  document.getElementById('add-page-inner').innerHTML=
-    '<div class="add-page-wrap">'
-    +'<div class="add-header"><div><h2 style="font-size:16px;font-weight:700;margin-bottom:2px">录题</h2>'
-      +'<div style="font-size:12px;color:#aaa">保存后自动清空，可连续录入</div></div>'
-      +(addState.savedCount>0?'<div class="add-badge">✓ 已录 '+addState.savedCount+' 题</div>':'')
-    +'</div>'
-    +'<div class="fr"><label>所属分类</label><select id="add-cat" style="width:100%">'+catOpts+'</select></div>'
-    +'<div class="add-card">'
-      +'<div class="fr"><label><span class="req">*</span> 题目内容</label>'
-        +buildRTE('add-q','在此输入题目内容...','')+' '
-      +'</div>'
-      +'<div class="fr">'
+
+  // mc-specific: options list
+  var mcSection=_addType==='mc'
+    ?'<div class="fr">'
         +'<div class="add-opts-header"><label><span class="req">*</span> 试题选项</label>'
           +'<span class="opts-hint">左侧单选框 = 正确答案</span></div>'
         +'<div id="add-ol">'+[0,1,2,3].map(function(i){
@@ -1172,6 +1174,34 @@ function renderAddPage(){
         }).join('')+'</div>'
         +'<button class="add-add-opt-btn" onclick="addAddOpt()">＋ 添加选项</button>'
       +'</div>'
+    :'';
+
+  // fill-specific: answer field
+  var fillSection=_addType==='fill'
+    ?'<div class="fr">'
+        +'<label><span class="req">*</span> 参考答案</label>'
+        +'<input type="text" id="add-ans" placeholder="输入标准答案（判断时忽略大小写）">'
+      +'</div>'
+    :'';
+
+  document.getElementById('add-page-inner').innerHTML=
+    '<div class="add-page-wrap">'
+    +'<div class="add-header"><div><h2 style="font-size:16px;font-weight:700;margin-bottom:2px">录题</h2>'
+      +'<div style="font-size:12px;color:#aaa">保存后自动清空，可连续录入</div></div>'
+      +(addState.savedCount>0?'<div class="add-badge">✓ 已录 '+addState.savedCount+' 题</div>':'')
+    +'</div>'
+    // type toggle
+    +'<div class="add-type-tabs">'
+      +'<button class="add-type-tab'+(_addType==='mc'?' active':'')+'" onclick="switchAddType(\'mc\')">选择题</button>'
+      +'<button class="add-type-tab'+(_addType==='fill'?' active':'')+'" onclick="switchAddType(\'fill\')">填空题</button>'
+    +'</div>'
+    +'<div class="fr"><label>所属分类</label><select id="add-cat" style="width:100%">'+catOpts+'</select></div>'
+    +'<div class="add-card">'
+      +'<div class="fr"><label><span class="req">*</span> 题目内容</label>'
+        +buildRTE('add-q','在此输入题目内容...','')+' '
+      +'</div>'
+      +mcSection
+      +fillSection
       +'<div class="fr" style="margin-bottom:0"><label>解析 <span style="color:#bbb;font-weight:400">(选填)</span></label>'
         +buildRTE('add-exp','请输入解析...','')+' '
       +'</div>'
@@ -1181,29 +1211,54 @@ function renderAddPage(){
       +'<button class="add-save-done-btn" onclick="saveAndDone()">保存并完成</button>'
     +'</div></div>';
 }
+
+function switchAddType(type){
+  _addType=type;
+  // preserve selected cat before re-render
+  var cat=document.getElementById('add-cat');
+  var savedCat=cat?cat.value:'';
+  renderAddPage();
+  var s=document.getElementById('add-cat');if(s&&savedCat)s.value=savedCat;
+}
+
 function addAddOpt(){var l=document.getElementById('add-ol');var n=l.children.length;if(n>=8)return;var d=document.createElement('div');d.className='add-opt-row';d.innerHTML='<span class="add-opt-letter">'+String.fromCharCode(65+n)+'</span><input type="radio" name="add-cor" value="'+n+'" class="add-radio"><input type="text" class="add-opt-inp" placeholder="请输入试题选项"><button class="add-opt-del" onclick="addRemOpt(this)">🗑</button>';l.appendChild(d);}
 function addRemOpt(btn){var l=document.getElementById('add-ol');if(l.children.length<=2)return;btn.parentElement.remove();Array.from(l.children).forEach(function(row,i){row.querySelector('.add-opt-letter').textContent=String.fromCharCode(65+i);row.querySelector('input[type=radio]').value=i;});}
+
 function collectAddForm(){
   var cat=document.getElementById('add-cat').value;
   var qHtml=rteGet('add-q');var qText=rteGetText('add-q').trim();
   if(!qText){alert('请输入题目内容');return null;}
+  var exp=rteGet('add-exp')||'';
+
+  if(_addType==='fill'){
+    var ans=(document.getElementById('add-ans')||{}).value||'';
+    ans=ans.trim();
+    if(!ans){alert('请输入参考答案');document.getElementById('add-ans').focus();return null;}
+    return{type:'fill',cat:cat,q:qHtml,ans:ans,exp:exp.trim()};
+  }
+
+  // mc
   var opts=Array.from(document.querySelectorAll('#add-ol .add-opt-inp')).map(function(i){return i.value.trim();});
   var filled=opts.filter(Boolean);
   if(filled.length<2){alert('至少填写 2 个选项');return null;}
   var cor=parseInt(document.querySelector('input[name=add-cor]:checked').value);
   if(!opts[cor]){alert('正确答案对应的选项为空');return null;}
   var corText=opts[cor];var finalOpts=opts.filter(Boolean);var finalCor=finalOpts.indexOf(corText);
-  var exp=rteGet('add-exp')||'';
   return{type:'mc',cat:cat,q:qHtml,opts:finalOpts,correct:finalCor,exp:exp.trim()};
 }
+
 function saveAndContinue(){
   var data=collectAddForm();if(!data)return;
+  var savedCat=data.cat;
   IDB.addQuestion(data).then(function(){
     reloadQ(function(){
       addState.savedCount++;
       var btn=document.querySelector('.add-save-next-btn');
       if(btn){btn.textContent='✓ 已保存！';btn.style.background='#27ae60';}
-      setTimeout(function(){var cat=document.getElementById('add-cat').value;renderAddPage();var s=document.getElementById('add-cat');if(s)s.value=cat;},500);
+      setTimeout(function(){
+        renderAddPage();
+        var s=document.getElementById('add-cat');if(s)s.value=savedCat;
+      },500);
     });
   });
 }
